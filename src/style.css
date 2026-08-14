@@ -46,6 +46,17 @@ body {
   font-size: 1.25rem;
 }
 
+.chat-app__url-qr {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid #334155;
+  border-radius: var(--radius);
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  margin-left: auto;
+}
+
 .chat-app__alias {
   display: flex;
   align-items: center;
@@ -389,7 +400,8 @@ body {
 .chat-app__qr-code {
   width: 100%;
   max-width: 24rem;
-  max-height: 8rem;
+  height: 12rem;
+  max-height: 50vh;
   overflow: auto;
   background: var(--surface);
   color: var(--text);
