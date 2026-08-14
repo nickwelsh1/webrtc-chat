@@ -44,6 +44,7 @@ export function initUi() {
       </div>
     </div>
     <div class="chat-app__qr-section" id="qr-section">
+      <button class="chat-app__overlay-close" id="qr-close-btn" type="button" title="Close">X</button>
       <h3 id="qr-title">Your QR</h3>
       <div class="chat-app__qr-loading hidden" id="qr-loading">
         <div class="chat-app__qr-spinner"></div>
@@ -69,6 +70,7 @@ export function initUi() {
       </div>
     </div>
     <div class="chat-app__scanner" id="scanner-section">
+      <button class="chat-app__overlay-close" id="scanner-close-btn" type="button" title="Close">X</button>
       <h3 id="scanner-title">Scan QR code</h3>
       <p class="chat-app__status" id="scanner-status">Scan all chunks in any order</p>
       <div class="chat-app__scanner-chunks" id="scanner-chunks"></div>
@@ -110,8 +112,10 @@ export function initUi() {
   ui.qrReset = document.getElementById('qr-reset')
   ui.qrDoneBtn = document.getElementById('qr-done-btn')
   ui.qrModeBtn = document.getElementById('qr-mode-btn')
+  ui.qrCloseBtn = document.getElementById('qr-close-btn')
 
   ui.scannerSection = document.getElementById('scanner-section')
+  ui.scannerCloseBtn = document.getElementById('scanner-close-btn')
   ui.scannerTitle = document.getElementById('scanner-title')
   ui.scannerStatus = document.getElementById('scanner-status')
   ui.scannerChunks = document.getElementById('scanner-chunks')
@@ -192,9 +196,9 @@ export function setQrModeBtn(label, enabled = true) {
   ui.qrModeBtn.classList.toggle('hidden', !enabled)
 }
 
-export function setQrCodeInfo(chunk) {
+export function setQrCodeInfo(fullCode, chunk) {
   ui.qrText.textContent = `QR ${chunk.index + 1} of ${chunk.n}`
-  ui.qrCodePre.textContent = chunk.code
+  ui.qrCodePre.textContent = fullCode
 }
 
 export function setQrNav(current, n) {

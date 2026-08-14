@@ -57,9 +57,11 @@ ui.qrReset.addEventListener('click', resetQrCodes)
 ui.qrDoneBtn.addEventListener('click', onQrDone)
 ui.qrLoadingCancel.addEventListener('click', onCancelInvite)
 ui.qrModeBtn.addEventListener('click', onQrModeToggle)
+ui.qrCloseBtn.addEventListener('click', onQrClose)
 ui.urlQrBtn.addEventListener('click', onUrlQr)
 
 ui.scannerCancelBtn.addEventListener('click', stopScanner)
+ui.scannerCloseBtn.addEventListener('click', () => stopScanner())
 ui.scannerContinueBtn.addEventListener('click', onScannerContinue)
 ui.manualSubmit.addEventListener('click', onManualSubmit)
 ui.manualInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') onManualSubmit() })
@@ -238,7 +240,7 @@ async function renderQrCarousel() {
   const chunk = chunks[index]
   await renderQr(ui.qrCanvas, chunk, 384)
   setQrDots(chunks.length, index)
-  setQrCodeInfo({ code: chunk, index, n: chunks.length })
+  setQrCodeInfo(state.currentQr.fullCode, { index, n: chunks.length })
   setQrNav(index, chunks.length)
   if (singleChunk) {
     const isSimple = state.currentQr.mode === 'simple'
@@ -288,6 +290,14 @@ function onQrDone() {
   if (state.currentQr.kind === OFFER && state.invite) {
     hideQr()
     startScanner(ANSWER, (fullCode) => handleAnswerCode(fullCode))
+  } else {
+    hideQr()
+  }
+}
+
+function onQrClose() {
+  if (state.activeInvite) {
+    onCancelInvite()
   } else {
     hideQr()
   }

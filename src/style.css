@@ -47,14 +47,19 @@ body {
 }
 
 .chat-app__url-qr {
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid #334155;
+  background: var(--primary);
+  color: #082f49;
+  border: 1px solid var(--primary);
   border-radius: var(--radius);
   padding: 0.4rem 0.75rem;
   cursor: pointer;
   font-size: 0.875rem;
+  font-weight: 600;
   margin-left: auto;
+}
+
+.chat-app__url-qr:hover {
+  background: var(--primary-hover);
 }
 
 .chat-app__alias {
@@ -254,6 +259,24 @@ body {
   z-index: 10;
 }
 
+.chat-app__overlay-close {
+  position: absolute;
+  top: var(--gap);
+  right: var(--gap);
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid #334155;
+  border-radius: var(--radius);
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.chat-app__overlay-close:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+
 .chat-app__qr-section--visible,
 .chat-app__scanner--visible {
   display: flex;
@@ -402,7 +425,9 @@ body {
   max-width: 24rem;
   height: 12rem;
   max-height: 50vh;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  white-space: pre-wrap;
   background: var(--surface);
   color: var(--text);
   border: 1px solid #334155;
