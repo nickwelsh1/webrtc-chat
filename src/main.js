@@ -5,7 +5,8 @@ import {
   setQrTitle, setQrDots, setQrCodeInfo, setQrNav, setQrModeBtn, setQrUrlMode,
   showScanner, hideScanner, setScannerStatus,
   renderScannerSlots, setScannerContinue,
-  showStored, appendMessage, clearMessages, ui
+  showStored, appendMessage, clearMessages,
+  logMessage, clearLog, setRetry, showLastAttempt, ui
 } from './ui.js'
 import {
   OFFER, ANSWER, MAX_CHUNKS, QR_CAPACITY, splitCode, splitToN, isChunk, isFullCode,
@@ -18,6 +19,7 @@ const STORE_ALIAS = 'chat-app-alias'
 const STORE_PEER_ID = 'chat-app-peerId'
 const STORE_INVITE = 'chat-app-stored-invite'
 const STORE_ANSWER = 'chat-app-stored-answer'
+const STORE_LAST_ATTEMPT = 'chat-app-last-attempt'
 
 const state = {
   alias: localStorage.getItem(STORE_ALIAS) || `User-${Math.floor(Math.random() * 1000)}`,
@@ -31,7 +33,9 @@ const state = {
   currentQr: null,
   invite: null,
   answer: null,
-  activeInvite: null
+  activeInvite: null,
+  log: [],
+  lastAttempt: null
 }
 
 initUi()
@@ -39,6 +43,8 @@ setAlias(state.alias)
 showStart()
 updatePeerCount(0)
 renderStoredCodes()
+state.lastAttempt = loadStored(STORE_LAST_ATTEMPT)
+renderLastAttempt()
 
 ui.createBtn.addEventListener('click', onCreate)
 ui.joinBtn.addEventListener('click', onJoin)
@@ -48,6 +54,8 @@ ui.sendBtn.addEventListener('click', onSend)
 ui.messageInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') onSend() })
 ui.startAliasInput.addEventListener('change', onAliasChange)
 ui.aliasInput.addEventListener('change', onAliasChange)
+ui.retryBtn.addEventListener('click', onRetry)
+ui.clearLogBtn.addEventListener('click', () => { state.log = []; clearLog() })
 
 ui.qrPrev.addEventListener('click', () => navigateQr(-1))
 ui.qrNext.addEventListener('click', () => navigateQr(1))
@@ -65,6 +73,41 @@ ui.scannerCloseBtn.addEventListener('click', () => stopScanner())
 ui.scannerContinueBtn.addEventListener('click', onScannerContinue)
 ui.manualSubmit.addEventListener('click', onManualSubmit)
 ui.manualInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') onManualSubmit() })
+
+function log(text, level = 'info') {
+  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const line = `[${time}] ${text}`
+  state.log.push(line)
+  logMessage(level, line)
+  if (level === 'error') console.error(line)
+}
+
+function recordAttempt({ action, fullCode, success, error }) {
+  const attempt = { action, fullCode, success, error, time: Date.now() }
+  state.lastAttempt = attempt
+  saveStored(STORE_LAST_ATTEMPT, attempt)
+  renderLastAttempt()
+}
+
+function renderLastAttempt() {
+  const a = state.lastAttempt
+  showLastAttempt(a)
+  setRetry(Boolean(a && a.success === false), a ? `Retry ${a.action}` : 'Retry last attempt')
+}
+
+function withTimeout(promise, ms, message) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))
+  ])
+}
+
+function wirePeerEvents(pc) {
+  pc.onicegatheringstatechange = () => log(`ICE gathering state: ${pc.iceGatheringState}`)
+  pc.oniceconnectionstatechange = () => log(`ICE connection state: ${pc.iceConnectionState}`)
+  pc.onsignalingstatechange = () => log(`Signaling state: ${pc.signalingState}`)
+  pc.onicecandidateerror = (e) => log(`ICE candidate error: ${e.errorCode} ${e.errorText || ''} ${e.url || ''}`, 'error')
+}
 
 function onAliasChange(e) {
   state.alias = e.target.value.trim() || state.alias
@@ -88,6 +131,23 @@ function onInvite() {
 async function onQuit() {
   await closeAll()
   showStart()
+}
+
+function onRetry() {
+  const a = state.lastAttempt
+  if (!a || a.success !== false) return
+  log(`Retrying ${a.action}...`)
+  if (a.action === 'create') {
+    startInvite()
+  } else if (a.action === 'join') {
+    handleJoinCode(a.fullCode)
+  } else if (a.action === 'accept') {
+    if (!state.invite) {
+      log('Cannot retry: no pending invite. Create a new invite and scan the answer again.', 'error')
+      return
+    }
+    handleAnswerCode(a.fullCode)
+  }
 }
 
 function onCancelInvite() {
@@ -184,11 +244,14 @@ function showStoredQr(data, title) {
 }
 
 async function startInvite() {
+  log('Creating invite...')
+  recordAttempt({ action: 'create' })
   showQrLoading('Creating invite', 'Gathering connection candidates, this may take a few seconds...')
 
   let pc, dc, sdp, controller
   try {
     pc = createPeer()
+    wirePeerEvents(pc)
     controller = new AbortController()
     state.activeInvite = { pc, controller }
       ; ({ dc, sdp } = await makeOffer(pc, 'chat', controller.signal))
@@ -196,10 +259,14 @@ async function startInvite() {
     if (pc) { try { pc.close() } catch { } }
     state.activeInvite = null
     if (controller && controller.signal.aborted) {
+      log('Invite cancelled')
+      recordAttempt({ action: 'create', success: false, error: 'Cancelled' })
       hideQr()
       showStart()
       return
     }
+    log(`Invite failed: ${err.message}`, 'error')
+    recordAttempt({ action: 'create', success: false, error: err.message })
     setQrTitle('Invite failed')
     ui.qrLoadingText.textContent = err.message
     ui.qrLoading.classList.remove('hidden')
@@ -207,6 +274,7 @@ async function startInvite() {
     return
   }
 
+  log('ICE gathering complete, encoding invite...')
   state.activeInvite = null
   const fullCode = encodeSdp(OFFER, sdp)
 
@@ -215,6 +283,8 @@ async function startInvite() {
     simpleChunks = splitToN(fullCode, MAX_CHUNKS)
     singleChunk = fullCode.length <= QR_CAPACITY ? [fullCode] : null
   } catch (err) {
+    log(`Invite too large: ${err.message}`, 'error')
+    recordAttempt({ action: 'create', fullCode, success: false, error: err.message })
     setQrTitle('Invite too large')
     ui.qrLoadingText.textContent = err.message
     ui.qrLoading.classList.remove('hidden')
@@ -225,6 +295,9 @@ async function startInvite() {
   saveStored(STORE_INVITE, { fullCode, chunks: simpleChunks, created: Date.now() })
   state.invite = { pc, dc, fullCode, simpleChunks, singleChunk }
   state.currentQr = { kind: OFFER, fullCode, chunks: simpleChunks, index: 0, mode: 'simple', singleChunk }
+
+  log(`Invite created: ${fullCode.slice(0, 40)}...`)
+  recordAttempt({ action: 'create', fullCode, success: true })
 
   attachConnection(pc, dc, null, '')
   await renderQrCarousel()
@@ -342,11 +415,14 @@ function resetQrCodes() {
 }
 
 async function handleJoinCode(fullCode) {
+  log('Joining with invite...')
+  recordAttempt({ action: 'join', fullCode })
   try {
     const { kind, sdp } = decodeSdp(fullCode)
     if (kind !== OFFER) throw new Error('Not an invite code')
 
     const pc = createPeer()
+    wirePeerEvents(pc)
     const dcPromise = new Promise((resolve) => { pc.ondatachannel = (e) => resolve(e.channel) })
     const answerSdp = await makeAnswer(pc, sdp)
     const answerFull = encodeSdp(ANSWER, answerSdp)
@@ -357,7 +433,9 @@ async function handleJoinCode(fullCode) {
     state.answer = { pc, fullCode: answerFull, simpleChunks, singleChunk }
     state.currentQr = { kind: ANSWER, fullCode: answerFull, chunks: simpleChunks, index: 0, mode: 'simple', singleChunk }
 
-    const dc = await dcPromise
+    log('Answer created, waiting for data channel...')
+    const dc = await withTimeout(dcPromise, 5000, 'Data channel was not received; the invite may be invalid or the peer may have closed')
+    log('Data channel received')
     attachConnection(pc, dc, null, '')
     await renderQrCarousel()
     showQrCarousel()
@@ -365,22 +443,31 @@ async function handleJoinCode(fullCode) {
     ui.qrText.textContent = 'Show these QR codes to the peer who invited you'
     updateQrNav()
     renderStoredCodes()
+    recordAttempt({ action: 'join', fullCode, success: true })
   } catch (err) {
+    log(`Join failed: ${err.message}`, 'error')
+    recordAttempt({ action: 'join', fullCode, success: false, error: err.message })
     setScannerStatus(err.message)
   }
 }
 
 async function handleAnswerCode(fullCode) {
+  log('Accepting answer...')
+  recordAttempt({ action: 'accept', fullCode })
   try {
     const { kind, sdp } = decodeSdp(fullCode)
     if (kind !== ANSWER) throw new Error('Not an answer code')
     if (!state.invite) throw new Error('No pending invite')
     await setAnswer(state.invite.pc, sdp)
+    log('Answer accepted, connecting...')
+    recordAttempt({ action: 'accept', fullCode, success: true })
     state.currentQr = null
     state.invite = null
     hideQr()
     hideScanner()
   } catch (err) {
+    log(`Accept answer failed: ${err.message}`, 'error')
+    recordAttempt({ action: 'accept', fullCode, success: false, error: err.message })
     setScannerStatus(err.message)
   }
 }
@@ -429,6 +516,7 @@ function processChunkCode(text, source) {
     renderScannerSlots(chunk.n, state.scanning.chunks)
     setScannerContinue(state.scanning.chunks.size === chunk.n)
     setScannerStatus(`Got chunk ${chunk.index + 1} of ${chunk.n}. Scan or paste the rest.`)
+    log(`Received ${chunk.kind === OFFER ? 'invite' : 'answer'} chunk ${chunk.index + 1}/${chunk.n} from ${source}`)
     if (source === 'manual') ui.manualInput.value = ''
     return
   }
@@ -439,6 +527,7 @@ function processChunkCode(text, source) {
       setScannerStatus(`This is an ${full.kind === OFFER ? 'invite' : 'answer'} code, expected ${state.scanning.kind === OFFER ? 'invite' : 'answer'}`)
       return
     }
+    log(`Received full ${full.kind === OFFER ? 'invite' : 'answer'} code from ${source}`)
     const cb = state.scanning.onComplete
     state.scanning = null
     stopScanner()
@@ -446,12 +535,14 @@ function processChunkCode(text, source) {
     return
   }
 
+  log('Unrecognized code pasted', 'error')
   setScannerStatus('Unrecognized code. Make sure it is a valid invite or answer chunk.')
 }
 
 function onManualSubmit() {
   const text = ui.manualInput.value
   if (!text) return
+  log('Manual code submitted')
   const lines = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
   for (const line of lines) {
     processChunkCode(line, 'manual')
@@ -492,16 +583,25 @@ function attachConnection(pc, dc, knownPeerId, knownAlias) {
   }
 
   dc.onopen = () => {
+    log('Data channel opened')
     hideQr()
     showChat()
     sendHello(conn)
   }
   dc.onmessage = (e) => handleDcMessage(conn, e.data)
-  dc.onclose = () => removeConnection(conn)
-  dc.onerror = () => removeConnection(conn)
+  dc.onclose = () => {
+    log('Data channel closed')
+    removeConnection(conn)
+  }
+  dc.onerror = () => {
+    log('Data channel error', 'error')
+    removeConnection(conn)
+  }
 
   pc.onconnectionstatechange = () => {
+    log(`Connection state: ${pc.connectionState}`)
     if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
+      log(`Connection ${pc.connectionState}`, 'error')
       removeConnection(conn)
     }
   }
@@ -579,6 +679,7 @@ async function handlePeerList(conn, msg) {
 async function createMeshOffer(targetId, targetAlias, viaConn) {
   if (state.peers.has(targetId) || state.pending.has(targetId)) return
   const pc = createPeer()
+  wirePeerEvents(pc)
   const { dc, sdp } = await makeOffer(pc, `mesh-${targetId}`)
   attachConnection(pc, dc, targetId, targetAlias)
   const payload = { type: 'mesh-offer', from: state.peerId, to: targetId, alias: state.alias, sdp }
@@ -588,9 +689,10 @@ async function createMeshOffer(targetId, targetAlias, viaConn) {
 async function handleMeshOffer(conn, msg) {
   if (state.peers.has(msg.from) || state.pending.has(msg.from)) return
   const pc = createPeer()
+  wirePeerEvents(pc)
   const dcPromise = new Promise((resolve) => { pc.ondatachannel = (e) => resolve(e.channel) })
   const answerSdp = await makeAnswer(pc, msg.sdp)
-  const dc = await dcPromise
+  const dc = await withTimeout(dcPromise, 5000, 'Data channel was not received for mesh connection')
   attachConnection(pc, dc, msg.from, msg.alias || '')
   const payload = { type: 'mesh-answer', from: state.peerId, to: msg.from, sdp: answerSdp }
   conn.dc.send(JSON.stringify({ type: 'relay', to: msg.from, payload }))
@@ -639,6 +741,8 @@ function handleAlias(conn, msg) {
 function removeConnection(conn) {
   if (conn.removed) return
   conn.removed = true
+  const label = conn.alias || conn.peerId || 'A peer'
+  log(`${label} removed`)
   state.peers.delete(conn.peerId)
   state.pending.delete(conn.peerId)
   state.unknown.delete(conn)

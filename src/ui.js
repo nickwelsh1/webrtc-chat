@@ -29,6 +29,15 @@ export function initUi() {
             <button class="chat-app__btn" id="join-btn" type="button">Join with QR</button>
           </form>
           <div class="chat-app__stored hidden" id="stored-codes"></div>
+          <div class="chat-app__log-section" id="log-section">
+            <div class="chat-app__log-header">
+              <h3 class="chat-app__log-title">Status log</h3>
+              <button class="chat-app__btn" id="clear-log-btn" type="button">Clear</button>
+            </div>
+            <ul class="chat-app__log-list" id="log-list"></ul>
+            <div class="chat-app__last-attempt hidden" id="last-attempt"></div>
+            <button class="chat-app__btn chat-app__btn--primary" id="retry-btn" type="button" disabled>Retry last attempt</button>
+          </div>
         </section>
         <section class="chat-app__chat hidden" id="chat-view">
           <div class="chat-app__messages" id="messages"></div>
@@ -95,6 +104,12 @@ export function initUi() {
   ui.peerCount = document.getElementById('peer-count')
   ui.storedSection = document.getElementById('stored-codes')
 
+  ui.logSection = document.getElementById('log-section')
+  ui.logList = document.getElementById('log-list')
+  ui.lastAttempt = document.getElementById('last-attempt')
+  ui.retryBtn = document.getElementById('retry-btn')
+  ui.clearLogBtn = document.getElementById('clear-log-btn')
+
   ui.qrSection = document.getElementById('qr-section')
   ui.qrLoading = document.getElementById('qr-loading')
   ui.qrLoadingText = document.getElementById('qr-loading-text')
@@ -156,6 +171,58 @@ export function setAlias(value) {
 
 export function updatePeerCount(n) {
   ui.peerCount.textContent = `${n} peer${n === 1 ? '' : 's'}`
+}
+
+export function logMessage(level, text) {
+  if (!ui.logList) return
+  const li = document.createElement('li')
+  li.className = `chat-app__log-entry chat-app__log-entry--${level}`
+  li.textContent = text
+  ui.logList.appendChild(li)
+  ui.logList.scrollTop = ui.logList.scrollHeight
+}
+
+export function clearLog() {
+  if (ui.logList) ui.logList.innerHTML = ''
+}
+
+export function showLastAttempt(data) {
+  if (!ui.lastAttempt) return
+  if (!data) {
+    ui.lastAttempt.classList.add('hidden')
+    return
+  }
+
+  const time = data.time
+    ? new Date(data.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : ''
+
+  let status
+  let statusClass
+  if (data.success === true) {
+    status = 'succeeded'
+    statusClass = 'chat-app__last-attempt--succeeded'
+  } else if (data.success === false) {
+    status = 'failed'
+    statusClass = 'chat-app__last-attempt--failed'
+  } else {
+    status = 'in progress'
+    statusClass = 'chat-app__last-attempt--pending'
+  }
+
+  const error = data.success === false && data.error ? ` — ${data.error}` : ''
+  const full = data.fullCode ? ` (${data.fullCode.slice(0, 24)}...)` : ''
+
+  ui.lastAttempt.textContent = `Last ${data.action} at ${time}: ${status}${error}${full}`
+  ui.lastAttempt.className = `chat-app__last-attempt ${statusClass}`
+  ui.lastAttempt.classList.remove('hidden')
+}
+
+export function setRetry(enabled, text = 'Retry last attempt') {
+  if (ui.retryBtn) {
+    ui.retryBtn.disabled = !enabled
+    ui.retryBtn.textContent = text
+  }
 }
 
 export function showQrLoading(title, message) {

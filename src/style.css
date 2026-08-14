@@ -493,3 +493,81 @@ body {
   border-radius: var(--radius);
   touch-action: none;
 }
+
+.chat-app__log-section {
+  width: 100%;
+  max-width: 28rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.chat-app__log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.chat-app__log-title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.chat-app__log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.5rem;
+  max-height: 12rem;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid #334155;
+  border-radius: var(--radius);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+}
+
+.chat-app__log-entry {
+  padding: 0.25rem 0;
+  border-bottom: 1px solid #334155;
+  color: var(--text);
+}
+
+.chat-app__log-entry:last-child {
+  border-bottom: none;
+}
+
+.chat-app__log-entry--error {
+  color: var(--danger);
+}
+
+.chat-app__log-entry--warn {
+  color: #f59e0b;
+}
+
+.chat-app__log-entry--info {
+  color: var(--text);
+}
+
+.chat-app__log-entry--success {
+  color: var(--success);
+}
+
+.chat-app__last-attempt {
+  padding: 0.5rem;
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 0.875rem;
+}
+
+.chat-app__last-attempt--succeeded {
+  color: var(--success);
+}
+
+.chat-app__last-attempt--failed {
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+
+.chat-app__last-attempt--pending {
+  color: var(--muted);
+}
