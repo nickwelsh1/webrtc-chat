@@ -2,7 +2,7 @@ import './style.css'
 import {
   initUi, showStart, showChat, setAlias, updatePeerCount,
   showQrLoading, showQrCarousel, hideQr,
-  setQrTitle, setQrDots, setQrCodeInfo, setQrNav, setQrModeBtn,
+  setQrTitle, setQrDots, setQrCodeInfo, setQrNav, setQrModeBtn, setQrUrlMode,
   showScanner, hideScanner, setScannerStatus,
   renderScannerSlots, setScannerContinue,
   showStored, appendMessage, clearMessages, ui
@@ -242,6 +242,7 @@ async function renderQrCarousel() {
   setQrDots(chunks.length, index)
   setQrCodeInfo(state.currentQr.fullCode, { index, n: chunks.length })
   setQrNav(index, chunks.length)
+  setQrUrlMode(state.currentQr.kind === 'url')
   if (singleChunk) {
     const isSimple = state.currentQr.mode === 'simple'
     setQrModeBtn(isSimple ? 'Use 1 QR' : 'Use 4 QRs', true)
