@@ -75,7 +75,7 @@ body {
   border-radius: var(--radius);
   padding: 0.5rem;
   font-size: 0.875rem;
-  width: 9rem;
+  width: clamp(3rem, 14vw, 9rem);
 }
 
 .chat-app__peer-count {
