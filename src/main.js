@@ -305,7 +305,7 @@ function onQrClose() {
 
 async function copyCurrentQrCode() {
   if (!state.currentQr) return
-  const text = state.currentQr.chunks[state.currentQr.index]
+  const text = state.currentQr.fullCode || state.currentQr.chunks[state.currentQr.index]
   try {
     await navigator.clipboard.writeText(text)
     ui.qrText.textContent = 'Copied to clipboard'
@@ -450,7 +450,13 @@ function processChunkCode(text, source) {
 
 function onManualSubmit() {
   const text = ui.manualInput.value
-  if (text) processChunkCode(text, 'manual')
+  if (!text) return
+  const lines = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+  for (const line of lines) {
+    processChunkCode(line, 'manual')
+    if (!state.scanning) break
+  }
+  onScannerContinue()
 }
 
 function onScannerContinue() {
