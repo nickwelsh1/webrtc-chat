@@ -278,6 +278,7 @@ async function startInvite() {
   log('ICE gathering complete, encoding invite...')
   state.activeInvite = null
   const fullCode = encodeSdp(OFFER, sdp)
+  log(`Offer has data channel: ${sdp.sdp.includes('m=application')}`)
 
   let simpleChunks, singleChunk
   try {
@@ -422,14 +423,15 @@ async function handleJoinCode(fullCode) {
     const { kind, sdp } = decodeSdp(fullCode)
     if (kind !== OFFER) throw new Error('Not an invite code')
     log(`Invite code: ${fullCode.length} chars, SDP: ${sdp.sdp.length} chars`)
+    log(`Offer has data channel: ${sdp.sdp.includes('m=application')}`)
 
     const pc = createPeer()
     wirePeerEvents(pc)
     const dcPromise = new Promise((resolve) => {
-      pc.ondatachannel = (e) => {
+      pc.addEventListener('datachannel', (e) => {
         log(`Data channel received: ${e.channel.label}`)
         resolve(e.channel)
-      }
+      }, { once: true })
     })
     const answerSdp = await makeAnswer(pc, sdp)
     const answerFull = encodeSdp(ANSWER, answerSdp)
@@ -440,16 +442,18 @@ async function handleJoinCode(fullCode) {
     state.answer = { pc, fullCode: answerFull, simpleChunks, singleChunk }
     state.currentQr = { kind: ANSWER, fullCode: answerFull, chunks: simpleChunks, index: 0, mode: 'simple', singleChunk }
 
-    log('Answer created, waiting for data channel...')
-    const dc = await withTimeout(dcPromise, 5000, 'Data channel was not received; the invite may be invalid or the peer may have closed')
-    log('Data channel received')
-    attachConnection(pc, dc, null, '')
+    log('Answer created, show this to the inviter')
     await renderQrCarousel()
     showQrCarousel()
     setQrTitle('Your answer')
     ui.qrText.textContent = 'Show these QR codes to the peer who invited you'
     updateQrNav()
     renderStoredCodes()
+
+    log('Waiting for data channel...')
+    const dc = await withTimeout(dcPromise, 60000, 'Data channel was not received; the invite may be invalid or the peer may have closed')
+    log('Data channel received')
+    attachConnection(pc, dc, null, '')
     recordAttempt({ action: 'join', fullCode, success: true })
   } catch (err) {
     log(`Join failed: ${err.message}`, 'error')
