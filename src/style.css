@@ -84,10 +84,12 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 1.5rem;
   padding: var(--gap);
+  padding-top: 1.5rem;
   height: 100%;
+  overflow-y: auto;
 }
 
 .chat-app__start-title {
