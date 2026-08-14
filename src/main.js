@@ -2,13 +2,13 @@ import './style.css'
 import {
   initUi, showStart, showChat, setAlias, updatePeerCount,
   showQrLoading, showQrCarousel, hideQr,
-  setQrTitle, setQrDots, setQrCodeInfo, setQrNav,
+  setQrTitle, setQrDots, setQrCodeInfo, setQrNav, setQrModeBtn,
   showScanner, hideScanner, setScannerStatus,
   renderScannerSlots, setScannerContinue,
   showStored, appendMessage, clearMessages, ui
 } from './ui.js'
 import {
-  OFFER, ANSWER, MAX_CHUNKS, splitCode, isChunk, isFullCode,
+  OFFER, ANSWER, MAX_CHUNKS, QR_CAPACITY, splitCode, splitToN, isChunk, isFullCode,
   assembleCode, encodeSdp, decodeSdp, renderQr
 } from './qr.js'
 import { createPeer, makeOffer, makeAnswer, setAnswer } from './webrtc.js'
@@ -30,7 +30,8 @@ const state = {
   scanning: null,
   currentQr: null,
   invite: null,
-  answer: null
+  answer: null,
+  activeInvite: null
 }
 
 initUi()
@@ -54,6 +55,9 @@ ui.qrCopy.addEventListener('click', copyCurrentQrCode)
 ui.qrCopyAll.addEventListener('click', copyAllQrCodes)
 ui.qrReset.addEventListener('click', resetQrCodes)
 ui.qrDoneBtn.addEventListener('click', onQrDone)
+ui.qrLoadingCancel.addEventListener('click', onCancelInvite)
+ui.qrModeBtn.addEventListener('click', onQrModeToggle)
+ui.urlQrBtn.addEventListener('click', onUrlQr)
 
 ui.scannerCancelBtn.addEventListener('click', stopScanner)
 ui.scannerContinueBtn.addEventListener('click', onScannerContinue)
@@ -81,6 +85,16 @@ function onInvite() {
 
 async function onQuit() {
   await closeAll()
+  showStart()
+}
+
+function onCancelInvite() {
+  if (state.activeInvite) {
+    state.activeInvite.controller.abort()
+    try { state.activeInvite.pc.close() } catch { }
+    state.activeInvite = null
+  }
+  hideQr()
   showStart()
 }
 
@@ -155,9 +169,11 @@ function renderStoredCodes() {
 }
 
 function showStoredQr(data, title) {
-  if (!data || !data.chunks || !data.fullCode) return
+  if (!data || !data.fullCode) return
   const kind = data.fullCode.startsWith(OFFER) ? OFFER : ANSWER
-  state.currentQr = { kind, fullCode: data.fullCode, chunks: data.chunks, index: 0 }
+  const simpleChunks = splitToN(data.fullCode, MAX_CHUNKS)
+  const singleChunk = data.fullCode.length <= QR_CAPACITY ? [data.fullCode] : null
+  state.currentQr = { kind, fullCode: data.fullCode, chunks: simpleChunks, index: 0, mode: 'simple', singleChunk }
   showQrCarousel()
   setQrTitle(`Stored ${title}`)
   ui.qrText.textContent = title === 'Invite' ? 'Stored invite QR codes' : 'Stored answer QR codes'
@@ -168,13 +184,34 @@ function showStoredQr(data, title) {
 async function startInvite() {
   showQrLoading('Creating invite', 'Gathering connection candidates, this may take a few seconds...')
 
-  const pc = createPeer()
-  const { dc, sdp } = await makeOffer(pc, 'chat')
+  let pc, dc, sdp, controller
+  try {
+    pc = createPeer()
+    controller = new AbortController()
+    state.activeInvite = { pc, controller }
+      ; ({ dc, sdp } = await makeOffer(pc, 'chat', controller.signal))
+  } catch (err) {
+    if (pc) { try { pc.close() } catch { } }
+    state.activeInvite = null
+    if (controller && controller.signal.aborted) {
+      hideQr()
+      showStart()
+      return
+    }
+    setQrTitle('Invite failed')
+    ui.qrLoadingText.textContent = err.message
+    ui.qrLoading.classList.remove('hidden')
+    ui.qrCarousel.classList.add('hidden')
+    return
+  }
+
+  state.activeInvite = null
   const fullCode = encodeSdp(OFFER, sdp)
 
-  let chunks
+  let simpleChunks, singleChunk
   try {
-    chunks = splitCode(fullCode, MAX_CHUNKS)
+    simpleChunks = splitToN(fullCode, MAX_CHUNKS)
+    singleChunk = fullCode.length <= QR_CAPACITY ? [fullCode] : null
   } catch (err) {
     setQrTitle('Invite too large')
     ui.qrLoadingText.textContent = err.message
@@ -183,9 +220,9 @@ async function startInvite() {
     return
   }
 
-  saveStored(STORE_INVITE, { fullCode, chunks, created: Date.now() })
-  state.invite = { pc, dc, fullCode, chunks }
-  state.currentQr = { kind: OFFER, fullCode, chunks, index: 0 }
+  saveStored(STORE_INVITE, { fullCode, chunks: simpleChunks, created: Date.now() })
+  state.invite = { pc, dc, fullCode, simpleChunks, singleChunk }
+  state.currentQr = { kind: OFFER, fullCode, chunks: simpleChunks, index: 0, mode: 'simple', singleChunk }
 
   attachConnection(pc, dc, null, '')
   await renderQrCarousel()
@@ -197,12 +234,18 @@ async function startInvite() {
 
 async function renderQrCarousel() {
   if (!state.currentQr) return
-  const { chunks, index } = state.currentQr
+  const { chunks, index, singleChunk } = state.currentQr
   const chunk = chunks[index]
   await renderQr(ui.qrCanvas, chunk, 384)
   setQrDots(chunks.length, index)
   setQrCodeInfo({ code: chunk, index, n: chunks.length })
   setQrNav(index, chunks.length)
+  if (singleChunk) {
+    const isSimple = state.currentQr.mode === 'simple'
+    setQrModeBtn(isSimple ? 'Use 1 QR' : 'Use 4 QRs', true)
+  } else {
+    setQrModeBtn('', false)
+  }
 }
 
 function navigateQr(delta) {
@@ -218,6 +261,26 @@ function navigateQr(delta) {
 function updateQrNav() {
   if (!state.currentQr) return
   setQrNav(state.currentQr.index, state.currentQr.chunks.length)
+}
+
+function onQrModeToggle() {
+  if (!state.currentQr || !state.currentQr.singleChunk) return
+  const nextSimple = state.currentQr.mode !== 'simple'
+  state.currentQr.mode = nextSimple ? 'simple' : 'single'
+  state.currentQr.chunks = nextSimple
+    ? splitToN(state.currentQr.fullCode, MAX_CHUNKS)
+    : state.currentQr.singleChunk
+  state.currentQr.index = 0
+  renderQrCarousel()
+}
+
+async function onUrlQr() {
+  const url = window.location.origin || window.location.href
+  state.currentQr = { kind: 'url', fullCode: url, chunks: [url], index: 0, mode: 'simple', singleChunk: null }
+  await renderQrCarousel()
+  showQrCarousel()
+  setQrTitle('App URL')
+  ui.qrText.textContent = 'Scan this QR to open the app'
 }
 
 function onQrDone() {
@@ -276,11 +339,12 @@ async function handleJoinCode(fullCode) {
     const dcPromise = new Promise((resolve) => { pc.ondatachannel = (e) => resolve(e.channel) })
     const answerSdp = await makeAnswer(pc, sdp)
     const answerFull = encodeSdp(ANSWER, answerSdp)
-    const chunks = splitCode(answerFull, MAX_CHUNKS)
+    const simpleChunks = splitToN(answerFull, MAX_CHUNKS)
+    const singleChunk = answerFull.length <= QR_CAPACITY ? [answerFull] : null
 
-    saveStored(STORE_ANSWER, { fullCode: answerFull, chunks, created: Date.now() })
-    state.answer = { pc, fullCode: answerFull, chunks }
-    state.currentQr = { kind: ANSWER, fullCode: answerFull, chunks, index: 0 }
+    saveStored(STORE_ANSWER, { fullCode: answerFull, chunks: simpleChunks, created: Date.now() })
+    state.answer = { pc, fullCode: answerFull, simpleChunks, singleChunk }
+    state.currentQr = { kind: ANSWER, fullCode: answerFull, chunks: simpleChunks, index: 0, mode: 'simple', singleChunk }
 
     const dc = await dcPromise
     attachConnection(pc, dc, null, '')

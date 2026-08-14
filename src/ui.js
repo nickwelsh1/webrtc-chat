@@ -6,6 +6,7 @@ export function initUi() {
     <div class="chat-app">
       <header class="chat-app__header">
         <h1 class="chat-app__title">Chat App</h1>
+        <button class="chat-app__url-qr" id="url-qr-btn" type="button" title="Show app URL QR">URL</button>
         <div class="chat-app__alias">
           <span class="chat-app__alias-label">Alias</span>
           <input class="chat-app__alias-input" id="alias" type="text" maxlength="20" value="" />
@@ -47,6 +48,7 @@ export function initUi() {
       <div class="chat-app__qr-loading hidden" id="qr-loading">
         <div class="chat-app__qr-spinner"></div>
         <p id="qr-loading-text">Creating invite, please wait...</p>
+        <button class="chat-app__btn chat-app__btn--danger" id="qr-loading-cancel" type="button">Cancel</button>
       </div>
       <div class="chat-app__qr-carousel" id="qr-carousel">
         <canvas class="chat-app__qr-canvas" id="qr-canvas" width="384" height="384"></canvas>
@@ -59,6 +61,7 @@ export function initUi() {
         <pre class="chat-app__qr-code" id="qr-code"></pre>
         <div class="chat-app__qr-actions">
           <button class="chat-app__btn chat-app__btn--primary" id="qr-copy" type="button">Copy this code</button>
+          <button class="chat-app__btn" id="qr-mode-btn" type="button">Use 1 QR</button>
           <button class="chat-app__btn" id="qr-copy-all" type="button">Copy all</button>
           <button class="chat-app__btn chat-app__btn--danger" id="qr-reset" type="button">Reset codes</button>
           <button class="chat-app__btn chat-app__btn--primary" id="qr-done-btn" type="button">Done</button>
@@ -93,6 +96,7 @@ export function initUi() {
   ui.qrSection = document.getElementById('qr-section')
   ui.qrLoading = document.getElementById('qr-loading')
   ui.qrLoadingText = document.getElementById('qr-loading-text')
+  ui.qrLoadingCancel = document.getElementById('qr-loading-cancel')
   ui.qrCarousel = document.getElementById('qr-carousel')
   ui.qrCanvas = document.getElementById('qr-canvas')
   ui.qrDots = document.getElementById('qr-dots')
@@ -105,6 +109,7 @@ export function initUi() {
   ui.qrCopyAll = document.getElementById('qr-copy-all')
   ui.qrReset = document.getElementById('qr-reset')
   ui.qrDoneBtn = document.getElementById('qr-done-btn')
+  ui.qrModeBtn = document.getElementById('qr-mode-btn')
 
   ui.scannerSection = document.getElementById('scanner-section')
   ui.scannerTitle = document.getElementById('scanner-title')
@@ -122,6 +127,7 @@ export function initUi() {
   ui.quitBtn = document.getElementById('quit-btn')
   ui.sendBtn = document.getElementById('send-btn')
   ui.startAliasInput = document.getElementById('start-alias')
+  ui.urlQrBtn = document.getElementById('url-qr-btn')
 }
 
 export function showStart() {
@@ -180,7 +186,13 @@ export function setQrDots(n, current) {
   }
 }
 
-export function setQrCodeInfo(text, chunk) {
+export function setQrModeBtn(label, enabled = true) {
+  ui.qrModeBtn.textContent = label
+  ui.qrModeBtn.disabled = !enabled
+  ui.qrModeBtn.classList.toggle('hidden', !enabled)
+}
+
+export function setQrCodeInfo(chunk) {
   ui.qrText.textContent = `QR ${chunk.index + 1} of ${chunk.n}`
   ui.qrCodePre.textContent = chunk.code
 }

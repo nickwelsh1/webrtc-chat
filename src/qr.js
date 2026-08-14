@@ -4,7 +4,7 @@ import LZString from 'lz-string'
 export const OFFER = 'o'
 export const ANSWER = 'a'
 export const MAX_CHUNKS = 4
-const QR_CAPACITY = 2300 // safe byte capacity for QR with errorCorrectionLevel L
+export const QR_CAPACITY = 2300 // safe byte capacity for QR with errorCorrectionLevel L
 
 export function encodeSdp(kind, sdp) {
   const json = JSON.stringify(sdp)
@@ -30,6 +30,25 @@ export function splitCode(fullCode, maxChunks = MAX_CHUNKS) {
   }
 
   throw new Error(`Code too large to fit in ${maxChunks} QR codes`)
+}
+
+export function splitToN(fullCode, n) {
+  const pipe = fullCode.indexOf('|')
+  if (pipe === -1) throw new Error('Invalid code')
+  const kind = fullCode.slice(0, pipe)
+  const data = fullCode.slice(pipe + 1)
+
+  if (n < 1) throw new Error('Invalid chunk count')
+  const size = Math.ceil(data.length / n)
+  const chunks = []
+  for (let i = 0; i < n; i++) {
+    const chunk = data.slice(i * size, (i + 1) * size)
+    chunks.push(`${kind}|${i}/${n}|${chunk}`)
+  }
+
+  const fits = chunks.every((c) => c.length <= QR_CAPACITY)
+  if (!fits) throw new Error(`Code too large to fit in ${n} QR code${n === 1 ? '' : 's'}`)
+  return chunks
 }
 
 export function isChunk(text) {
