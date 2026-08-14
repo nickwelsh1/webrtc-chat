@@ -54,7 +54,7 @@ export function initUi() {
       <div class="chat-app__qr-carousel" id="qr-carousel">
         <canvas class="chat-app__qr-canvas" id="qr-canvas" width="384" height="384"></canvas>
         <div class="chat-app__qr-dots" id="qr-dots"></div>
-        <div class="chat-app__qr-nav">
+        <div class="chat-app__qr-nav" id="qr-nav">
           <button class="chat-app__btn" id="qr-prev" type="button" disabled>Previous</button>
           <button class="chat-app__btn" id="qr-next" type="button" disabled>Next</button>
         </div>
@@ -107,6 +107,7 @@ export function initUi() {
   ui.qrCodePre = document.getElementById('qr-code')
   ui.qrPrev = document.getElementById('qr-prev')
   ui.qrNext = document.getElementById('qr-next')
+  ui.qrNav = document.getElementById('qr-nav')
   ui.qrCopy = document.getElementById('qr-copy')
   ui.qrCopyAll = document.getElementById('qr-copy-all')
   ui.qrReset = document.getElementById('qr-reset')
@@ -194,6 +195,14 @@ export function setQrModeBtn(label, enabled = true) {
   ui.qrModeBtn.textContent = label
   ui.qrModeBtn.disabled = !enabled
   ui.qrModeBtn.classList.toggle('hidden', !enabled)
+}
+
+export function setQrUrlMode(isUrl) {
+  ui.qrDots.classList.toggle('hidden', isUrl)
+  ui.qrNav.classList.toggle('hidden', isUrl)
+  ui.qrCopyAll.classList.toggle('hidden', isUrl)
+  ui.qrReset.classList.toggle('hidden', isUrl)
+  ui.qrCopy.textContent = isUrl ? 'Copy URL' : 'Copy this code'
 }
 
 export function setQrCodeInfo(fullCode, chunk) {
