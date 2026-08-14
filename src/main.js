@@ -1,23 +1,43 @@
 import './style.css'
-import { initUi, showStart, showChat, setAlias, updatePeerCount, showQr, hideQr, showScanner, hideScanner, setScannerStatus, appendMessage, clearMessages, ui } from './ui.js'
-import { encodeSdp, decodeSdp, renderQr, OFFER, ANSWER } from './qr.js'
+import {
+  initUi, showStart, showChat, setAlias, updatePeerCount,
+  showQrLoading, showQrCarousel, hideQr,
+  setQrTitle, setQrDots, setQrCodeInfo, setQrNav,
+  showScanner, hideScanner, setScannerStatus,
+  renderScannerSlots, setScannerContinue,
+  showStored, appendMessage, clearMessages, ui
+} from './ui.js'
+import {
+  OFFER, ANSWER, MAX_CHUNKS, splitCode, isChunk, isFullCode,
+  assembleCode, encodeSdp, decodeSdp, renderQr
+} from './qr.js'
 import { createPeer, makeOffer, makeAnswer, setAnswer } from './webrtc.js'
 import { Html5Qrcode } from 'html5-qrcode'
 
+const STORE_ALIAS = 'chat-app-alias'
+const STORE_PEER_ID = 'chat-app-peerId'
+const STORE_INVITE = 'chat-app-stored-invite'
+const STORE_ANSWER = 'chat-app-stored-answer'
+
 const state = {
-  alias: localStorage.getItem('chat-app-alias') || `User-${Math.floor(Math.random() * 1000)}`,
-  peerId: localStorage.getItem('chat-app-peerId') || crypto.randomUUID(),
+  alias: localStorage.getItem(STORE_ALIAS) || `User-${Math.floor(Math.random() * 1000)}`,
+  peerId: localStorage.getItem(STORE_PEER_ID) || crypto.randomUUID(),
   peers: new Map(),
   pending: new Map(),
   unknown: new Set(),
   seen: new Set(),
-  scanner: null
+  scanner: null,
+  scanning: null,
+  currentQr: null,
+  invite: null,
+  answer: null
 }
 
 initUi()
 setAlias(state.alias)
 showStart()
 updatePeerCount(0)
+renderStoredCodes()
 
 ui.createBtn.addEventListener('click', onCreate)
 ui.joinBtn.addEventListener('click', onJoin)
@@ -27,11 +47,22 @@ ui.sendBtn.addEventListener('click', onSend)
 ui.messageInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') onSend() })
 ui.startAliasInput.addEventListener('change', onAliasChange)
 ui.aliasInput.addEventListener('change', onAliasChange)
+
+ui.qrPrev.addEventListener('click', () => navigateQr(-1))
+ui.qrNext.addEventListener('click', () => navigateQr(1))
+ui.qrCopy.addEventListener('click', copyCurrentQrCode)
+ui.qrCopyAll.addEventListener('click', copyAllQrCodes)
+ui.qrReset.addEventListener('click', resetQrCodes)
+ui.qrDoneBtn.addEventListener('click', onQrDone)
+
 ui.scannerCancelBtn.addEventListener('click', stopScanner)
+ui.scannerContinueBtn.addEventListener('click', onScannerContinue)
+ui.manualSubmit.addEventListener('click', onManualSubmit)
+ui.manualInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') onManualSubmit() })
 
 function onAliasChange(e) {
   state.alias = e.target.value.trim() || state.alias
-  localStorage.setItem('chat-app-alias', state.alias)
+  localStorage.setItem(STORE_ALIAS, state.alias)
   setAlias(state.alias)
   broadcast({ type: 'alias', peerId: state.peerId, alias: state.alias })
 }
@@ -41,10 +72,7 @@ function onCreate() {
 }
 
 function onJoin() {
-  startScanner(async (text) => {
-    stopScanner()
-    await handleJoinScan(text)
-  })
+  startScanner(OFFER, (fullCode) => handleJoinCode(fullCode))
 }
 
 function onInvite() {
@@ -89,44 +117,289 @@ function sendTo(peerId, obj) {
   }
 }
 
-async function startInvite() {
-  const pc = createPeer()
-  const { dc, sdp } = await makeOffer(pc, 'chat')
-  const qrText = encodeSdp(OFFER, sdp)
-  await renderQr(ui.qrCanvas, qrText)
-  showQr('Invite peer', 'Show this QR to a new peer, then tap "Scan answer" and scan the answer QR they show.', 'Scan answer')
-  attachConnection(pc, dc, null, '')
-  ui.qrDoneBtn.onclick = () => {
-    hideQr()
-    startScanner(async (text) => {
-      try {
-        const { kind, sdp: answerSdp } = decodeSdp(text)
-        if (kind !== ANSWER) throw new Error('Not an answer QR')
-        await setAnswer(pc, answerSdp)
-      } catch (err) {
-        setScannerStatus(err.message)
-      }
-      stopScanner()
-    })
+function saveStored(key, data) {
+  localStorage.setItem(key, JSON.stringify(data))
+}
+
+function loadStored(key) {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
   }
 }
 
-async function handleJoinScan(text) {
+function clearStored() {
+  localStorage.removeItem(STORE_INVITE)
+  localStorage.removeItem(STORE_ANSWER)
+}
+
+function renderStoredCodes() {
+  const invite = loadStored(STORE_INVITE)
+  const answer = loadStored(STORE_ANSWER)
+  showStored(Boolean(invite), Boolean(answer))
+  if (!invite && !answer) return
+
+  const inviteQr = document.getElementById('stored-invite-qr')
+  const inviteCopy = document.getElementById('stored-invite-copy')
+  const answerQr = document.getElementById('stored-answer-qr')
+  const answerCopy = document.getElementById('stored-answer-copy')
+  const reset = document.getElementById('stored-reset')
+
+  if (inviteQr) inviteQr.onclick = () => showStoredQr(invite, 'Invite')
+  if (inviteCopy) inviteCopy.onclick = () => copyChunks(invite.chunks)
+  if (answerQr) answerQr.onclick = () => showStoredQr(answer, 'Answer')
+  if (answerCopy) answerCopy.onclick = () => copyChunks(answer.chunks)
+  if (reset) reset.onclick = () => { clearStored(); renderStoredCodes() }
+}
+
+function showStoredQr(data, title) {
+  if (!data || !data.chunks || !data.fullCode) return
+  const kind = data.fullCode.startsWith(OFFER) ? OFFER : ANSWER
+  state.currentQr = { kind, fullCode: data.fullCode, chunks: data.chunks, index: 0 }
+  showQrCarousel()
+  setQrTitle(`Stored ${title}`)
+  ui.qrText.textContent = title === 'Invite' ? 'Stored invite QR codes' : 'Stored answer QR codes'
+  renderQrCarousel()
+  updateQrNav()
+}
+
+async function startInvite() {
+  showQrLoading('Creating invite', 'Gathering connection candidates, this may take a few seconds...')
+
+  const pc = createPeer()
+  const { dc, sdp } = await makeOffer(pc, 'chat')
+  const fullCode = encodeSdp(OFFER, sdp)
+
+  let chunks
   try {
-    const { kind, sdp } = decodeSdp(text)
-    if (kind !== OFFER) throw new Error('Not an invite QR')
+    chunks = splitCode(fullCode, MAX_CHUNKS)
+  } catch (err) {
+    setQrTitle('Invite too large')
+    ui.qrLoadingText.textContent = err.message
+    ui.qrLoading.classList.remove('hidden')
+    ui.qrCarousel.classList.add('hidden')
+    return
+  }
+
+  saveStored(STORE_INVITE, { fullCode, chunks, created: Date.now() })
+  state.invite = { pc, dc, fullCode, chunks }
+  state.currentQr = { kind: OFFER, fullCode, chunks, index: 0 }
+
+  attachConnection(pc, dc, null, '')
+  await renderQrCarousel()
+  showQrCarousel()
+  setQrTitle('Invite peer')
+  updateQrNav()
+  renderStoredCodes()
+}
+
+async function renderQrCarousel() {
+  if (!state.currentQr) return
+  const { chunks, index } = state.currentQr
+  const chunk = chunks[index]
+  await renderQr(ui.qrCanvas, chunk, 384)
+  setQrDots(chunks.length, index)
+  setQrCodeInfo({ code: chunk, index, n: chunks.length })
+  setQrNav(index, chunks.length)
+}
+
+function navigateQr(delta) {
+  if (!state.currentQr) return
+  const n = state.currentQr.chunks.length
+  let i = state.currentQr.index + delta
+  if (i < 0) i = n - 1
+  if (i >= n) i = 0
+  state.currentQr.index = i
+  renderQrCarousel()
+}
+
+function updateQrNav() {
+  if (!state.currentQr) return
+  setQrNav(state.currentQr.index, state.currentQr.chunks.length)
+}
+
+function onQrDone() {
+  if (!state.currentQr) { hideQr(); return }
+  if (state.currentQr.kind === OFFER && state.invite) {
+    hideQr()
+    startScanner(ANSWER, (fullCode) => handleAnswerCode(fullCode))
+  } else {
+    hideQr()
+  }
+}
+
+async function copyCurrentQrCode() {
+  if (!state.currentQr) return
+  const text = state.currentQr.chunks[state.currentQr.index]
+  try {
+    await navigator.clipboard.writeText(text)
+    ui.qrText.textContent = 'Copied to clipboard'
+  } catch {
+    ui.qrText.textContent = 'Could not copy automatically'
+  }
+}
+
+async function copyAllQrCodes() {
+  if (!state.currentQr) return
+  await copyChunks(state.currentQr.chunks)
+}
+
+async function copyChunks(chunks) {
+  const text = (chunks || []).join('\n')
+  try {
+    await navigator.clipboard.writeText(text)
+    ui.qrText.textContent = 'All codes copied to clipboard'
+  } catch {
+    ui.qrText.textContent = 'Could not copy automatically'
+  }
+}
+
+function resetQrCodes() {
+  if (!state.currentQr) { hideQr(); return }
+  const key = state.currentQr.kind === OFFER ? STORE_INVITE : STORE_ANSWER
+  localStorage.removeItem(key)
+  if (state.currentQr.kind === OFFER) state.invite = null
+  if (state.currentQr.kind === ANSWER) state.answer = null
+  state.currentQr = null
+  hideQr()
+  renderStoredCodes()
+}
+
+async function handleJoinCode(fullCode) {
+  try {
+    const { kind, sdp } = decodeSdp(fullCode)
+    if (kind !== OFFER) throw new Error('Not an invite code')
+
     const pc = createPeer()
     const dcPromise = new Promise((resolve) => { pc.ondatachannel = (e) => resolve(e.channel) })
     const answerSdp = await makeAnswer(pc, sdp)
-    const qrText = encodeSdp(ANSWER, answerSdp)
-    await renderQr(ui.qrCanvas, qrText)
-    showQr('Your answer', 'Show this QR to the peer who invited you. You will join once they scan it.', 'Done')
-    ui.qrDoneBtn.onclick = () => hideQr()
+    const answerFull = encodeSdp(ANSWER, answerSdp)
+    const chunks = splitCode(answerFull, MAX_CHUNKS)
+
+    saveStored(STORE_ANSWER, { fullCode: answerFull, chunks, created: Date.now() })
+    state.answer = { pc, fullCode: answerFull, chunks }
+    state.currentQr = { kind: ANSWER, fullCode: answerFull, chunks, index: 0 }
+
     const dc = await dcPromise
     attachConnection(pc, dc, null, '')
+    await renderQrCarousel()
+    showQrCarousel()
+    setQrTitle('Your answer')
+    ui.qrText.textContent = 'Show these QR codes to the peer who invited you'
+    updateQrNav()
+    renderStoredCodes()
   } catch (err) {
     setScannerStatus(err.message)
   }
+}
+
+async function handleAnswerCode(fullCode) {
+  try {
+    const { kind, sdp } = decodeSdp(fullCode)
+    if (kind !== ANSWER) throw new Error('Not an answer code')
+    if (!state.invite) throw new Error('No pending invite')
+    await setAnswer(state.invite.pc, sdp)
+    state.currentQr = null
+    state.invite = null
+    hideQr()
+    hideScanner()
+  } catch (err) {
+    setScannerStatus(err.message)
+  }
+}
+
+async function startScanner(kind, onComplete) {
+  showScanner(kind === OFFER ? 'Scan invite QR codes' : 'Scan answer QR codes')
+  setScannerStatus('Scan any QR code in any order, or paste a chunk code below')
+  renderScannerSlots(0, new Map())
+  setScannerContinue(false)
+
+  state.scanning = { kind, n: null, chunks: new Map(), onComplete }
+  state.scanner = new Html5Qrcode('scanner-video')
+
+  try {
+    await state.scanner.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      (text) => processChunkCode(text, 'camera'),
+      () => { }
+    )
+  } catch (err) {
+    setScannerStatus(`Camera error: ${err.message}`)
+  }
+}
+
+function onScanResult(text) {
+  processChunkCode(text, 'camera')
+}
+
+function processChunkCode(text, source) {
+  if (!state.scanning) return
+  text = text.trim()
+  if (!text) return
+
+  const chunk = isChunk(text)
+  if (chunk) {
+    if (chunk.kind !== state.scanning.kind) {
+      setScannerStatus(`This is an ${chunk.kind === OFFER ? 'invite' : 'answer'} chunk, expected ${state.scanning.kind === OFFER ? 'invite' : 'answer'}`)
+      return
+    }
+    if (state.scanning.n !== null && chunk.n !== state.scanning.n) {
+      state.scanning.chunks.clear()
+    }
+    state.scanning.n = chunk.n
+    state.scanning.chunks.set(chunk.index, text)
+    renderScannerSlots(chunk.n, state.scanning.chunks)
+    setScannerContinue(state.scanning.chunks.size === chunk.n)
+    setScannerStatus(`Got chunk ${chunk.index + 1} of ${chunk.n}. Scan or paste the rest.`)
+    if (source === 'manual') ui.manualInput.value = ''
+    return
+  }
+
+  const full = isFullCode(text)
+  if (full) {
+    if (full.kind !== state.scanning.kind) {
+      setScannerStatus(`This is an ${full.kind === OFFER ? 'invite' : 'answer'} code, expected ${state.scanning.kind === OFFER ? 'invite' : 'answer'}`)
+      return
+    }
+    const cb = state.scanning.onComplete
+    state.scanning = null
+    stopScanner()
+    cb(text)
+    return
+  }
+
+  setScannerStatus('Unrecognized code. Make sure it is a valid invite or answer chunk.')
+}
+
+function onManualSubmit() {
+  const text = ui.manualInput.value
+  if (text) processChunkCode(text, 'manual')
+}
+
+function onScannerContinue() {
+  if (!state.scanning) return
+  if (!state.scanning.n || state.scanning.chunks.size !== state.scanning.n) return
+  const fullCode = assembleCode([...state.scanning.chunks.values()])
+  const cb = state.scanning.onComplete
+  state.scanning = null
+  stopScanner()
+  cb(fullCode)
+}
+
+async function stopScanner() {
+  hideScanner()
+  if (state.scanning) state.scanning = null
+  if (state.scanner) {
+    try {
+      await state.scanner.stop()
+      state.scanner.clear()
+    } catch { }
+    state.scanner = null
+  }
+  ui.manualInput.value = ''
 }
 
 function attachConnection(pc, dc, knownPeerId, knownAlias) {
@@ -138,7 +411,8 @@ function attachConnection(pc, dc, knownPeerId, knownAlias) {
   }
 
   dc.onopen = () => {
-    if (!ui.chatView.classList.contains('hidden')) showChat()
+    hideQr()
+    showChat()
     sendHello(conn)
   }
   dc.onmessage = (e) => handleDcMessage(conn, e.data)
@@ -225,8 +499,6 @@ async function createMeshOffer(targetId, targetAlias, viaConn) {
   if (state.peers.has(targetId) || state.pending.has(targetId)) return
   const pc = createPeer()
   const { dc, sdp } = await makeOffer(pc, `mesh-${targetId}`)
-  const conn = { pc, dc, peerId: targetId, alias: targetAlias, removed: false }
-  state.pending.set(targetId, conn)
   attachConnection(pc, dc, targetId, targetAlias)
   const payload = { type: 'mesh-offer', from: state.peerId, to: targetId, alias: state.alias, sdp }
   viaConn.dc.send(JSON.stringify({ type: 'relay', to: targetId, payload }))
@@ -289,8 +561,8 @@ function removeConnection(conn) {
   state.peers.delete(conn.peerId)
   state.pending.delete(conn.peerId)
   state.unknown.delete(conn)
-  try { conn.dc.close() } catch {}
-  try { conn.pc.close() } catch {}
+  try { conn.dc.close() } catch { }
+  try { conn.pc.close() } catch { }
   if (conn.peerId) {
     appendMessage({ id: `sys-bye-${conn.peerId}`, kind: 'system', text: `${conn.alias || 'A peer'} left`, time: Date.now() })
     updatePeerCount(state.peers.size)
@@ -298,8 +570,8 @@ function removeConnection(conn) {
 }
 
 async function closeAll() {
-  stopScanner()
   hideQr()
+  await stopScanner()
   for (const conn of [...state.peers.values(), ...state.pending.values(), ...state.unknown]) {
     removeConnection(conn)
   }
@@ -307,31 +579,8 @@ async function closeAll() {
   state.pending.clear()
   state.unknown.clear()
   state.seen.clear()
+  state.invite = null
+  state.answer = null
+  state.currentQr = null
   clearMessages()
-}
-
-async function startScanner(onScan) {
-  showScanner()
-  state.scanner = new Html5Qrcode('scanner-video')
-  try {
-    await state.scanner.start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 250, height: 250 } },
-      (text) => { onScan(text) },
-      () => {}
-    )
-  } catch (err) {
-    setScannerStatus(`Camera error: ${err.message}`)
-  }
-}
-
-async function stopScanner() {
-  hideScanner()
-  if (state.scanner) {
-    try {
-      await state.scanner.stop()
-      state.scanner.clear()
-    } catch {}
-    state.scanner = null
-  }
 }
