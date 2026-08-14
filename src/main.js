@@ -105,6 +105,7 @@ function withTimeout(promise, ms, message) {
 function wirePeerEvents(pc) {
   pc.onicegatheringstatechange = () => log(`ICE gathering state: ${pc.iceGatheringState}`)
   pc.oniceconnectionstatechange = () => log(`ICE connection state: ${pc.iceConnectionState}`)
+  pc.onconnectionstatechange = () => log(`Connection state: ${pc.connectionState}`)
   pc.onsignalingstatechange = () => log(`Signaling state: ${pc.signalingState}`)
   pc.onicecandidateerror = (e) => log(`ICE candidate error: ${e.errorCode} ${e.errorText || ''} ${e.url || ''}`, 'error')
 }
@@ -420,10 +421,16 @@ async function handleJoinCode(fullCode) {
   try {
     const { kind, sdp } = decodeSdp(fullCode)
     if (kind !== OFFER) throw new Error('Not an invite code')
+    log(`Invite code: ${fullCode.length} chars, SDP: ${sdp.sdp.length} chars`)
 
     const pc = createPeer()
     wirePeerEvents(pc)
-    const dcPromise = new Promise((resolve) => { pc.ondatachannel = (e) => resolve(e.channel) })
+    const dcPromise = new Promise((resolve) => {
+      pc.ondatachannel = (e) => {
+        log(`Data channel received: ${e.channel.label}`)
+        resolve(e.channel)
+      }
+    })
     const answerSdp = await makeAnswer(pc, sdp)
     const answerFull = encodeSdp(ANSWER, answerSdp)
     const simpleChunks = splitToN(answerFull, MAX_CHUNKS)
@@ -457,6 +464,7 @@ async function handleAnswerCode(fullCode) {
   try {
     const { kind, sdp } = decodeSdp(fullCode)
     if (kind !== ANSWER) throw new Error('Not an answer code')
+    log(`Answer code: ${fullCode.length} chars, SDP: ${sdp.sdp.length} chars`)
     if (!state.invite) throw new Error('No pending invite')
     await setAnswer(state.invite.pc, sdp)
     log('Answer accepted, connecting...')
@@ -690,7 +698,12 @@ async function handleMeshOffer(conn, msg) {
   if (state.peers.has(msg.from) || state.pending.has(msg.from)) return
   const pc = createPeer()
   wirePeerEvents(pc)
-  const dcPromise = new Promise((resolve) => { pc.ondatachannel = (e) => resolve(e.channel) })
+  const dcPromise = new Promise((resolve) => {
+    pc.ondatachannel = (e) => {
+      log(`Mesh data channel received: ${e.channel.label}`)
+      resolve(e.channel)
+    }
+  })
   const answerSdp = await makeAnswer(pc, msg.sdp)
   const dc = await withTimeout(dcPromise, 5000, 'Data channel was not received for mesh connection')
   attachConnection(pc, dc, msg.from, msg.alias || '')
